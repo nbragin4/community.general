@@ -431,7 +431,11 @@ def build_plan(command, project_path, variables_args, state_file, targets, state
 
     plan_command.extend(_state_args(state_file))
 
-    rc, out, err = module.run_command(plan_command + variables_args, cwd=project_path)
+    rc, out, err = module.run_command(
+        plan_command + variables_args, 
+        cwd=project_path,
+        environ_update=env_vars if variables_as_env else None
+    )
 
     if rc == 0:
         # no changes
@@ -510,6 +514,7 @@ def main():
             variables=dict(type="dict"),
             complex_vars=dict(type="bool", default=False),
             variables_files=dict(aliases=["variables_file"], type="list", elements="path"),
+            variables_as_env=dict(type='bool', default=False),
             plan_file=dict(type="path"),
             state_file=dict(type="path"),
             targets=dict(type="list", elements="str", default=[]),
@@ -538,6 +543,7 @@ def main():
     variables = module.params.get("variables") or {}
     complex_vars = module.params.get("complex_vars")
     variables_files = module.params.get("variables_files")
+    variables_as_env = module.params.get('variables_as_env')
     plan_file = module.params.get("plan_file")
     state_file = module.params.get("state_file")
     force_init = module.params.get("force_init")
@@ -646,6 +652,7 @@ def main():
         return ",".join(ret_out)
 
     variables_args = []
+    env_vars = {}
     if complex_vars:
         for k, v in variables.items():
             if isinstance(v, dict):
@@ -658,6 +665,12 @@ def main():
                 variables_args.extend(["-var", f"{k}={v}"])
             else:
                 variables_args.extend(["-var", f"{k}={format_args(v)}"])
+    elif variables_as_env:
+        # Build TF_VAR_* environment variables
+        env_vars = build_env_vars(variables, complex_vars)
+        for k, v in variables.items():
+            if v is None:
+                variables_args.extend(['-var', f'{k}=null'])
     else:
         for k, v in variables.items():
             variables_args.extend(["-var", f"{k}={v}"])
@@ -742,7 +755,13 @@ def main():
             )
 
     if needs_application and not module.check_mode and state != "planned":
-        rc, out, err = module.run_command(command, check_rc=False, cwd=project_path)
+        rc, out, err = module.run_command(
+            command, 
+            check_rc=False, 
+            cwd=project_path,
+            environ_update=env_vars if variables_as_env else None
+        )
+
         if rc != 0:
             if workspace_ctx["current"] != workspace:
                 select_workspace(command[0], project_path, workspace_ctx["current"], no_color)
